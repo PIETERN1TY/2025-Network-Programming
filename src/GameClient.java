@@ -1,5 +1,5 @@
 /*
- * 게임 클라이언트 - PitcherDecisionHandler의 UI를 활용한 완전한 클라이언트
+ * 게임 클라이언트 - 완전한 UI 구현
  */
 import javax.swing.*;
 import java.awt.*;
@@ -11,14 +11,12 @@ public class GameClient extends JFrame {
     private Socket socket;
     private GameDataStreamManager streamManager;
     private String nickname;
-    private String role; // "PITCHER" or "BATTER"
+    private String role;
     
-    // UI 컴포넌트
     private JPanel mainPanel;
     private CardLayout cardLayout;
     private GamePanel gamePanel;
     
-    // 게임 상태
     private int strikes = 0;
     private int balls = 0;
     private int outs = 0;
@@ -32,16 +30,11 @@ public class GameClient extends JFrame {
         super("Hit & Run - 야구 게임");
         
         try {
-            // 서버 연결
             socket = new Socket(serverAddress, port);
             streamManager = new GameDataStreamManager(socket);
             
             initUI();
-            
-            // 닉네임 입력
             showNicknameDialog();
-            
-            // 서버 메시지 수신 시작
             startMessageListener();
             
         } catch (IOException e) {
@@ -61,28 +54,26 @@ public class GameClient extends JFrame {
         cardLayout = new CardLayout();
         mainPanel = new JPanel(cardLayout);
         
-        // 대기 화면
         mainPanel.add(createWaitingPanel(), "WAITING");
         
-        // 게임 화면
         gamePanel = new GamePanel(this);
         mainPanel.add(gamePanel, "GAME");
         
         add(mainPanel);
         setVisible(true);
         
-        // 전역 키 리스너 추가 (KeyEventDispatcher 사용)
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
             if (e.getID() == KeyEvent.KEY_PRESSED) {
-                char key = Character.toUpperCase(e.getKeyChar());
+                int keyCode = e.getKeyCode();
                 
                 if (waitingForInput && role != null) {
-                    if (role.equals("PITCHER") && (key == 'A' || key == 'S' || key == 'D' || key == 'F')) {
-                        sendPitch(key);
-                        return true;
-                    } else if (role.equals("BATTER") && key == 'H') {
-                        sendSwing();
-                        return true;
+                    if (role.equals("PITCHER")) {
+                        if (keyCode == KeyEvent.VK_A) { sendPitch('A'); return true; }
+                        if (keyCode == KeyEvent.VK_S) { sendPitch('S'); return true; }
+                        if (keyCode == KeyEvent.VK_D) { sendPitch('D'); return true; }
+                        if (keyCode == KeyEvent.VK_F) { sendPitch('F'); return true; }
+                    } else if (role.equals("BATTER")) {
+                        if (keyCode == KeyEvent.VK_H) { sendSwing(); return true; }
                     }
                 }
             }
@@ -99,15 +90,11 @@ public class GameClient extends JFrame {
         waitLabel.setForeground(Color.WHITE);
         
         panel.add(waitLabel, BorderLayout.CENTER);
-        
         return panel;
     }
     
     private void showNicknameDialog() {
-        nickname = JOptionPane.showInputDialog(this, 
-            "닉네임을 입력하세요:", 
-            "닉네임 설정", 
-            JOptionPane.QUESTION_MESSAGE);
+        nickname = JOptionPane.showInputDialog(this, "닉네임을 입력하세요:", "닉네임 설정", JOptionPane.QUESTION_MESSAGE);
         
         if (nickname == null || nickname.trim().isEmpty()) {
             nickname = "Player" + System.currentTimeMillis() % 1000;
@@ -115,9 +102,8 @@ public class GameClient extends JFrame {
         
         try {
             streamManager.sendMessage(GameProtocol.Builder.buildNickname(nickname));
-            gamePanel.addLog("닉네임: " + nickname);
         } catch (Exception e) {
-            gamePanel.addLog("닉네임 전송 실패: " + e.getMessage());
+            e.printStackTrace();
         }
     }
     
@@ -126,45 +112,33 @@ public class GameClient extends JFrame {
             try {
                 while (true) {
                     String message = streamManager.receiveMessage();
-                    if (message == null) {
-                        gamePanel.addLog("서버 연결이 끊어졌습니다.");
-                        break;
-                    }
+                    if (message == null) break;
                     handleServerMessage(message);
                 }
             } catch (IOException e) {
-                gamePanel.addLog("통신 오류: " + e.getMessage());
+                e.printStackTrace();
             }
         }).start();
     }
     
     private void handleServerMessage(String message) {
         SwingUtilities.invokeLater(() -> {
-            System.out.println("[수신] " + message); // 디버깅용 로그
+            System.out.println("[수신] " + message);
             
-            // 전체 메시지로 먼저 비교
             if (message.equals(GameProtocol.ROLE_PITCHER)) {
                 role = "PITCHER";
-                gamePanel.setRole("투수 (수비)");
-                gamePanel.addLog(">>> 당신은 투수입니다!");
+                gamePanel.setRole("PITCHER");
                 return;
             }
             
             if (message.equals(GameProtocol.ROLE_BATTER)) {
                 role = "BATTER";
-                gamePanel.setRole("타자 (공격)");
-                gamePanel.addLog(">>> 당신은 타자입니다!");
-                return;
-            }
-            
-            if (message.equals(GameProtocol.MATCH_FOUND)) {
-                gamePanel.addLog("상대를 찾았습니다! 게임을 시작합니다...");
+                gamePanel.setRole("BATTER");
                 return;
             }
             
             if (message.equals(GameProtocol.MATCH_START)) {
                 cardLayout.show(mainPanel, "GAME");
-                gamePanel.addLog("\n=== 게임 시작! ===\n");
                 requestFocus();
                 return;
             }
@@ -173,38 +147,28 @@ public class GameClient extends JFrame {
                 if (role != null && role.equals("PITCHER")) {
                     waitingForInput = true;
                     isMyTurn = true;
-                    gamePanel.addLog("[5초 안에 구종 선택! A/S/D/F]");
                     gamePanel.startTimer(5);
                 }
                 return;
             }
             
-            if (message.equals(GameProtocol.ACTION_BAT)) {
-                // 타자에게 스윙 요청이 올 때
-                return;
-            }
-            
             if (message.equals(GameProtocol.SWITCH_SIDE)) {
-                gamePanel.addLog("\n>>> 공수 교대!\n");
                 role = role.equals("PITCHER") ? "BATTER" : "PITCHER";
-                gamePanel.setRole(role.equals("PITCHER") ? "투수 (수비)" : "타자 (공격)");
+                gamePanel.setRole(role);
                 strikes = 0;
                 balls = 0;
                 gamePanel.updateCount(strikes, balls, outs);
+                gamePanel.clearBases();
+                gamePanel.switchInningHalf(); // 초/말 전환
                 return;
             }
             
-            // 접두사로 시작하는 메시지 처리
             if (message.startsWith("PITCH_INFO:")) {
                 String[] pitchData = GameProtocol.Parser.parsePitchInfo(message);
-                char pitchType = pitchData[0].charAt(0);
-                String pitchName = getPitchName(pitchType);
-                gamePanel.addLog("투구: " + pitchName + " (" + pitchData[1] + "km/h)");
                 
                 if (role != null && role.equals("BATTER")) {
                     waitingForInput = true;
                     isMyTurn = true;
-                    gamePanel.addLog("[3초 안에 스윙 결정! H키]");
                     gamePanel.startTimer(3);
                 }
                 return;
@@ -236,7 +200,6 @@ public class GameClient extends JFrame {
             
             if (message.startsWith("INNING:")) {
                 currentInning = Integer.parseInt(GameProtocol.Parser.getData(message));
-                gamePanel.addLog("\n=== " + currentInning + "회 시작 ===");
                 gamePanel.updateScore(myScore, opponentScore, currentInning);
                 return;
             }
@@ -253,31 +216,17 @@ public class GameClient extends JFrame {
         String[] parts = data.split(":", 2);
         String resultType = parts[0];
         
-        String resultMsg = "";
-        
         switch(resultType) {
-            case "STRIKE": resultMsg = "스트라이크!"; break;
-            case "BALL": resultMsg = "볼!"; break;
-            case "FOUL": resultMsg = "파울!"; break;
-            case "HIT": resultMsg = "안타!"; break;
-            case "HOMERUN": resultMsg = "홈런!!!"; break;
-            case "OUT": resultMsg = "아웃!"; break;
-            case "WALK": resultMsg = "볼넷!"; break;
-            case "STRIKEOUT": resultMsg = "삼진 아웃!"; break;
+            case "HIT": gamePanel.advanceRunners("HIT"); break;
+            case "HOMERUN": gamePanel.advanceRunners("HOMERUN"); break;
+            case "WALK": gamePanel.advanceRunners("WALK"); break;
         }
-        
-        gamePanel.addLog(">>> " + resultMsg);
     }
     
     private void handleGameEnd(String message) {
         String[] parts = message.split(":");
         String result = parts[parts.length - 1];
-        
         String endMsg = result.equals("WIN") ? "승리!" : result.equals("LOSE") ? "패배..." : "무승부";
-        
-        gamePanel.addLog("\n=== 게임 종료 ===");
-        gamePanel.addLog("최종 점수: " + myScore + " : " + opponentScore);
-        gamePanel.addLog(endMsg);
         
         JOptionPane.showMessageDialog(this, 
             endMsg + "\n최종 점수: " + myScore + " : " + opponentScore,
@@ -296,215 +245,327 @@ public class GameClient extends JFrame {
     }
     
     public void sendPitch(char pitchType) {
-        if (!waitingForInput || !role.equals("PITCHER")) return;
+        if (!waitingForInput || role == null || !role.equals("PITCHER")) return;
         
         try {
             streamManager.sendMessage(GameProtocol.Builder.buildPitch(pitchType));
             waitingForInput = false;
             isMyTurn = false;
-            gamePanel.disablePitchInput();
             gamePanel.stopTimer();
-            gamePanel.addLog("→ " + getPitchName(pitchType) + " 투구!");
         } catch (Exception e) {
-            gamePanel.addLog("투구 전송 실패: " + e.getMessage());
+            e.printStackTrace();
         }
     }
     
     public void sendSwing() {
-        if (!waitingForInput || !role.equals("BATTER")) return;
+        if (!waitingForInput || role == null || !role.equals("BATTER")) return;
         
         try {
             streamManager.sendMessage(GameProtocol.SWING_YES);
             waitingForInput = false;
             isMyTurn = false;
-            gamePanel.disableBatInput();
             gamePanel.stopTimer();
-            gamePanel.addLog("→ 스윙!");
         } catch (Exception e) {
-            gamePanel.addLog("스윙 전송 실패: " + e.getMessage());
+            e.printStackTrace();
         }
     }
     
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            String serverAddress = JOptionPane.showInputDialog(
-                null, "서버 주소:", "서버 연결", JOptionPane.QUESTION_MESSAGE);
-            
+            String serverAddress = JOptionPane.showInputDialog(null, "서버 주소:", "서버 연결", JOptionPane.QUESTION_MESSAGE);
             if (serverAddress == null || serverAddress.trim().isEmpty()) {
                 serverAddress = "localhost";
             }
-            
             new GameClient(serverAddress, 9999);
         });
     }
 }
 
 /**
- * 게임 화면 패널 - PitcherDecisionHandler 스타일 UI
+ * 게임 화면 패널 - 완전한 UI
  */
 class GamePanel extends JPanel {
     private GameClient client;
     
-    // 상태 레이블
-    private JLabel roleLabel;
-    private JLabel countLabel;
-    private JLabel scoreLabel;
-    private JLabel timerLabel;
+    // 이미지
+    private Image backgroundImage;
+    private Image pitcherImage;
+    private Image batterImage;
     
-    // 게임 로그
-    private JTextArea logArea;
+    // 게임 상태
+    private int balls = 0;
+    private int strikes = 0;
+    private int outs = 0;
+    private int myScore = 0;
+    private int oppScore = 0;
+    private int inning = 1;
+    private boolean isTopInning = true; // true: 초(▲), false: 말(▼)
+    private String role = "";
+    
+    // 주자 상태
+    private boolean runner1st = false;
+    private boolean runner2nd = false;
+    private boolean runner3rd = false;
     
     // 타이머
     private Timer countdownTimer;
-    private int remainingSeconds;
+    private int remainingSeconds = 0;
     
     public GamePanel(GameClient client) {
         this.client = client;
-        setLayout(new BorderLayout(10, 10));
-        setBackground(new Color(34, 139, 34));
-        setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        
-        initComponents();
+        setPreferredSize(new Dimension(800, 600));
+        loadImages();
     }
     
-    private void initComponents() {
-        // 상단 정보 패널
-        JPanel topPanel = new JPanel(new GridLayout(4, 1, 5, 5));
-        topPanel.setOpaque(false);
+    private void loadImages() {
+        String[] paths = {"images/", "../images/", "/Users/jiwonlee/eclipse-workspace/BaseballGame/images/"};
         
-        roleLabel = createLabel("역할: 대기중", 24, Color.WHITE);
-        countLabel = createLabel("S: 0  B: 0  O: 0", 20, Color.YELLOW);
-        scoreLabel = createLabel("0 : 0 (1회)", 20, Color.CYAN);
-        timerLabel = createLabel("", 18, Color.RED);
-        
-        topPanel.add(roleLabel);
-        topPanel.add(countLabel);
-        topPanel.add(scoreLabel);
-        topPanel.add(timerLabel);
-        
-        // 중앙 로그 영역
-        logArea = new JTextArea();
-        logArea.setEditable(false);
-        logArea.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
-        logArea.setBackground(new Color(20, 20, 20));
-        logArea.setForeground(Color.WHITE);
-        logArea.setLineWrap(true);
-        logArea.setWrapStyleWord(true);
-        JScrollPane scrollPane = new JScrollPane(logArea);
-        
-        // 하단 조작 안내
-        JPanel bottomPanel = new JPanel(new GridLayout(3, 1, 5, 5));
-        bottomPanel.setOpaque(false);
-        
-        JLabel pitchLabel = createLabel("투수: A(포크) S(직구) D(커브) F(슬라이더)", 16, Color.ORANGE);
-        JLabel batLabel = createLabel("타자: H(스윙)", 16, Color.CYAN);
-        JLabel infoLabel = createLabel("※ 키보드로 입력하세요!", 14, Color.LIGHT_GRAY);
-        
-        bottomPanel.add(pitchLabel);
-        bottomPanel.add(batLabel);
-        bottomPanel.add(infoLabel);
-        
-        add(topPanel, BorderLayout.NORTH);
-        add(scrollPane, BorderLayout.CENTER);
-        add(bottomPanel, BorderLayout.SOUTH);
+        for (String path : paths) {
+            java.io.File f = new java.io.File(path + "background.jpg");
+            if (f.exists()) {
+                backgroundImage = new ImageIcon(path + "background.jpg").getImage();
+                pitcherImage = new ImageIcon(path + "pitcher.png").getImage();
+                batterImage = new ImageIcon(path + "batter.png").getImage();
+                System.out.println("이미지 로드 완료: " + path);
+                return;
+            }
+        }
+        System.err.println("이미지를 찾을 수 없습니다.");
     }
     
-    private JLabel createLabel(String text, int fontSize, Color color) {
-        JLabel label = new JLabel(text, SwingConstants.CENTER);
-        label.setFont(new Font("맑은 고딕", Font.BOLD, fontSize));
-        label.setForeground(color);
-        return label;
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        Graphics2D g2 = (Graphics2D) g;
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        
+        // 배경
+        if (backgroundImage != null) {
+            g.drawImage(backgroundImage, 0, 0, getWidth(), getHeight(), this);
+        } else {
+            g.setColor(new Color(34, 100, 34));
+            g.fillRect(0, 0, getWidth(), getHeight());
+        }
+        
+        // 캐릭터
+        if (pitcherImage != null) g.drawImage(pitcherImage, 360, 250, 80, 100, this);
+        if (batterImage != null) g.drawImage(batterImage, 360, 420, 80, 100, this);
+        
+        // UI 그리기
+        drawScoreboard(g2);
+        drawBaseDiamond(g2);
+        drawBSOCount(g2);
+        drawControlInfo(g2);
     }
     
-    public void setRole(String role) {
-        roleLabel.setText("역할: " + role);
-        roleLabel.setForeground(role.contains("투수") ? Color.ORANGE : Color.CYAN);
+    private void drawScoreboard(Graphics2D g) {
+        int x = 20, y = 20, w = 200, h = 140;
+        
+        // 흰색 배경 박스
+        g.setColor(Color.WHITE);
+        g.fillRoundRect(x, y, w, h, 15, 15);
+        g.setColor(new Color(200, 200, 200));
+        g.setStroke(new BasicStroke(2));
+        g.drawRoundRect(x, y, w, h, 15, 15);
+        
+        // 점수 결정 (타자=공격팀, 투수=수비팀)
+        int attackScore, defenseScore;
+        if (role.equals("BATTER")) {
+            attackScore = myScore;
+            defenseScore = oppScore;
+        } else {
+            attackScore = oppScore;
+            defenseScore = myScore;
+        }
+        
+        // 공격팀 (빨간색)
+        g.setColor(new Color(220, 53, 69));
+        g.fillRect(x + 5, y + 8, w - 10, 40);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
+        g.drawString("공격팀", x + 15, y + 35);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 24));
+        g.drawString(String.valueOf(attackScore), x + w - 40, y + 38);
+        
+        // 수비팀 (파란색)
+        g.setColor(new Color(0, 123, 255));
+        g.fillRect(x + 5, y + 53, w - 10, 40);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
+        g.drawString("수비팀", x + 15, y + 80);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 24));
+        g.drawString(String.valueOf(defenseScore), x + w - 40, y + 83);
+        
+        // 타이머
+        g.setColor(Color.BLACK);
+        g.setFont(new Font("맑은 고딕", Font.PLAIN, 16));
+        g.drawString("⏱ 0:" + String.format("%02d", remainingSeconds), x + 15, y + 125);
+    }
+    
+    private void drawBaseDiamond(Graphics2D g) {
+        int cx = 400, cy = 75;
+        
+        // 흰색 배경 박스
+        g.setColor(Color.WHITE);
+        g.fillRoundRect(cx - 75, 15, 150, 110, 15, 15);
+        g.setColor(new Color(200, 200, 200));
+        g.drawRoundRect(cx - 75, 15, 150, 110, 15, 15);
+        
+        // 베이스 3개만 (홈 제외)
+        drawBase(g, cx, cy - 25, runner2nd);      // 2루 (위)
+        drawBase(g, cx - 35, cy + 5, runner3rd);  // 3루 (왼쪽)
+        drawBase(g, cx + 35, cy + 5, runner1st);  // 1루 (오른쪽)
+        
+        // 이닝 (초▲ / 말▼)
+        g.setColor(Color.BLACK);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
+        String inningText = inning + (isTopInning ? "▲" : "▼");
+        g.drawString(inningText, cx - 15, cy + 55);
+    }
+    
+    private void drawBase(Graphics2D g, int x, int y, boolean hasRunner) {
+        int size = 24;
+        int[] xp = {x, x + size/2, x, x - size/2};
+        int[] yp = {y - size/2, y, y + size/2, y};
+        
+        g.setColor(hasRunner ? new Color(255, 140, 0) : new Color(200, 200, 200));
+        g.fillPolygon(xp, yp, 4);
+        g.setColor(new Color(100, 100, 100));
+        g.drawPolygon(xp, yp, 4);
+    }
+    
+    private void drawBSOCount(Graphics2D g) {
+        int x = 560, y = 20, w = 140, h = 115;
+        
+        // 흰색 배경 박스
+        g.setColor(Color.WHITE);
+        g.fillRoundRect(x, y, w, h, 15, 15);
+        g.setColor(new Color(200, 200, 200));
+        g.drawRoundRect(x, y, w, h, 15, 15);
+        
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
+        
+        // Ball (초록색)
+        g.setColor(Color.BLACK);
+        g.drawString("B", x + 15, y + 30);
+        for (int i = 0; i < 4; i++) {
+            g.setColor(i < balls ? new Color(40, 167, 69) : new Color(200, 200, 200));
+            g.fillOval(x + 40 + i * 22, y + 15, 16, 16);
+        }
+        
+        // Strike (주황색)
+        g.setColor(Color.BLACK);
+        g.drawString("S", x + 15, y + 62);
+        for (int i = 0; i < 3; i++) {
+            g.setColor(i < strikes ? new Color(255, 165, 0) : new Color(200, 200, 200));
+            g.fillOval(x + 40 + i * 22, y + 47, 16, 16);
+        }
+        
+        // Out (빨간색)
+        g.setColor(Color.BLACK);
+        g.drawString("O", x + 15, y + 94);
+        for (int i = 0; i < 3; i++) {
+            g.setColor(i < outs ? new Color(220, 53, 69) : new Color(200, 200, 200));
+            g.fillOval(x + 40 + i * 22, y + 79, 16, 16);
+        }
+    }
+    
+    private void drawControlInfo(Graphics2D g) {
+        int y = getHeight() - 50;
+        
+        g.setColor(new Color(0, 0, 0, 180));
+        g.fillRect(0, y - 5, getWidth(), 55);
+        
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 14));
+        g.setColor(Color.ORANGE);
+        g.drawString("투수: A(포크) S(직구) D(커브) F(슬라이더)", 30, y + 15);
+        g.setColor(Color.CYAN);
+        g.drawString("타자: H(스윙)", 30, y + 35);
+        
+        // 현재 역할
+        g.setColor(Color.WHITE);
+        String roleText = role.equals("PITCHER") ? "[ 투수 ]" : role.equals("BATTER") ? "[ 타자 ]" : "";
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 16));
+        g.drawString(roleText, getWidth() - 100, y + 25);
+    }
+    
+    // 업데이트 메서드들
+    public void setRole(String r) {
+        this.role = r;
+        repaint();
     }
     
     public void updateCount(int s, int b, int o) {
-        countLabel.setText(String.format("S: %d  B: %d  O: %d", s, b, o));
+        this.strikes = s;
+        this.balls = b;
+        this.outs = o;
+        repaint();
     }
     
-    public void updateScore(int my, int opp, int inning) {
-        scoreLabel.setText(String.format("%d : %d (%d회)", my, opp, inning));
+    public void updateScore(int my, int opp, int inn) {
+        this.myScore = my;
+        this.oppScore = opp;
+        this.inning = inn;
+        repaint();
     }
     
-    public void addLog(String text) {
-        logArea.append(text + "\n");
-        logArea.setCaretPosition(logArea.getDocument().getLength());
-    }
-    
-    public void enablePitchInput() {
-        boolean pitchInputEnabled = true;
-        boolean batInputEnabled = false;
-    }
-    
-    public void disablePitchInput() {
-        boolean pitchInputEnabled = false;
-    }
-    
-    public void enableBatInput() {
-        boolean batInputEnabled = true;
-        boolean pitchInputEnabled = false;
-    }
-    
-    public void disableBatInput() {
-        boolean batInputEnabled = false;
-    }
-    
-    public void disableAllInput() {
-        boolean pitchInputEnabled = false;
-        boolean batInputEnabled = false;
-    }
-    
-    public void startTimer(int seconds) {
-        remainingSeconds = seconds;
-        updateTimerLabel();
-        
-        if (countdownTimer != null) {
-            countdownTimer.stop();
+    public void advanceRunners(String result) {
+        switch(result) {
+            case "HIT":
+                if (runner3rd) runner3rd = false;
+                if (runner2nd) { runner3rd = true; runner2nd = false; }
+                if (runner1st) { runner2nd = true; }
+                runner1st = true;
+                break;
+            case "HOMERUN":
+                runner1st = runner2nd = runner3rd = false;
+                break;
+            case "WALK":
+                if (runner1st && runner2nd) runner3rd = true;
+                if (runner1st) runner2nd = true;
+                runner1st = true;
+                break;
         }
+        repaint();
+    }
+    
+    public void clearBases() {
+        runner1st = runner2nd = runner3rd = false;
+        repaint();
+    }
+     
+    public void switchInningHalf() {
+        if (isTopInning) {
+            // 초 → 말
+            isTopInning = false;
+        } else {
+            // 말 → 다음 이닝 초
+            isTopInning = true;
+            inning++;
+        }
+        repaint();
+    }
+    
+    public void startTimer(int sec) {
+        remainingSeconds = sec;
+        if (countdownTimer != null) countdownTimer.stop();
         
         countdownTimer = new Timer(1000, e -> {
             remainingSeconds--;
-            updateTimerLabel();
-            
-            if (remainingSeconds <= 0) {
-                stopTimer();
-                timerLabel.setText("시간 초과!");
-            }
+            repaint();
+            if (remainingSeconds <= 0) stopTimer();
         });
         countdownTimer.start();
-    }
+        repaint();
+    } 
     
     public void stopTimer() {
-        if (countdownTimer != null) {
-            countdownTimer.stop();
-        }
-        timerLabel.setText("");
+        if (countdownTimer != null) countdownTimer.stop();
+        remainingSeconds = 0;
+        repaint();
+    } 
+    
+    public void addLog(String msg) {
+        System.out.println("[로그] " + msg);
     }
-    
-    private void updateTimerLabel() {
-        timerLabel.setText("⏱ " + remainingSeconds + "초");
-    }
-    
-    public void keyPressed(KeyEvent e) {
-        char key = Character.toUpperCase(e.getKeyChar());
-        
-        boolean pitchInputEnabled = false;
-		boolean batInputEnabled = false;
-		if (pitchInputEnabled) {
-            if (key == 'A' || key == 'S' || key == 'D' || key == 'F') {
-                client.sendPitch(key);
-            }
-        } else if (batInputEnabled) {
-            if (key == 'H') {
-                client.sendSwing();
-            }
-        }
-    }
-    
-    public void keyReleased(KeyEvent e) {}
-    
-    public void keyTyped(KeyEvent e) {}
 }
