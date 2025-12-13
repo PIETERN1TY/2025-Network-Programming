@@ -3,6 +3,7 @@
  * 2인 매칭이 완료되면 게임 스레드를 시작하도록 관리하는 역할
  */
 import java.net.*;
+import java.awt.Image;
 import java.io.*;
 import java.util.*;
 
@@ -11,6 +12,7 @@ public class MatchMakingThread extends Thread {
     private List<Socket> waitingClients;
     private int port;
     private boolean isRunning;
+    
     
     public MatchMakingThread(int port) {
         this.port = port;
@@ -161,6 +163,11 @@ class GameThread extends Thread {
     private int pitcherScore = 0;
     private int batterScore = 0;
     
+    // 주자 정보
+    private boolean runner1st = false;
+    private boolean runner2nd = false;
+    private boolean runner3rd = false;
+    
     public GameThread(Socket pitcherSocket, Socket batterSocket) {
         this.pitcherSocket = pitcherSocket;
         this.batterSocket = batterSocket;
@@ -211,27 +218,67 @@ class GameThread extends Thread {
      * 한 이닝 진행
      */
     private void playInning() throws IOException {
-        strikes = 0;
-        balls = 0;
-        
-        while (strikes < 3 && balls < 4 && outs < 3) {
-            playAtBat();
-        }
-        
-        if (strikes >= 3) {
-            outs++;
-            pitcherStream.sendMessage("OUT:STRIKEOUT");
-            batterStream.sendMessage("OUT:STRIKEOUT");
-        } else if (balls >= 4) {
-            batterStream.sendMessage("RESULT:WALK");
-            pitcherStream.sendMessage("RESULT:WALK");
+        while (outs < 3) {
+            // 새로운 타석 시작 - 카운트 초기화
+            strikes = 0;
+            balls = 0;
+            sendCountUpdate(); // 클라이언트에 0-0 카운트 전송
+            
+            // 한 타석 진행 (결과가 나올 때까지)
+            boolean atBatFinished = false;
+            while (!atBatFinished && outs < 3) {
+                String result = playAtBat();
+                
+                // 타석 종료 조건 체크
+                if (result.equals("HIT") || result.equals("HOMERUN") || 
+                    result.equals("OUT")) {
+                    atBatFinished = true;
+                }
+                
+                // 삼진 체크
+                if (strikes >= 3) {
+                    outs++;
+                    pitcherStream.sendMessage("RESULT:STRIKEOUT");
+                    batterStream.sendMessage("RESULT:STRIKEOUT");
+                    atBatFinished = true;
+                }
+                
+                // 볼넷 체크
+                if (balls >= 4) {
+                    handleWalk();
+                    atBatFinished = true;
+                }
+            }
         }
     }
     
     /**
-     * 한 타석 진행 (투구 -> 타격 -> 판정)
+     * 볼넷 처리
      */
-    private void playAtBat() throws IOException {
+    private void handleWalk() throws IOException {
+        // 볼넷: 주자 진루 처리
+        if (runner1st && runner2nd && runner3rd) {
+            // 만루: 타자 출루, 3루 주자 득점
+            batterScore++;
+        } else if (runner1st && runner2nd) {
+            // 1,2루: 3루로 밀림
+            runner3rd = true;
+        } else if (runner1st) {
+            // 1루만: 2루로 밀림
+            runner2nd = true;
+        }
+        // 타자는 1루 출루
+        runner1st = true;
+        
+        batterStream.sendMessage("RESULT:WALK");
+        pitcherStream.sendMessage("RESULT:WALK");
+    }
+    
+    /**
+     * 한 타석 진행 (투구 -> 타격 -> 판정)
+     * @return 판정 결과
+     */
+    private String playAtBat() throws IOException {
         // 투수에게 투구 요청 (5초 제한)
         pitcherStream.sendMessage("ACTION:PITCH");
         String pitchData = pitcherStream.receiveMessage(5000);
@@ -239,7 +286,8 @@ class GameThread extends Thread {
         if (pitchData == null || !pitchData.startsWith("PITCH:")) {
             // 타임아웃 또는 잘못된 응답 - 볼 처리
             balls++;
-            return;
+            sendCountUpdate();
+            return "BALL";
         }
         
         char pitchType = pitchData.charAt(6); // "PITCH:S" 형태
@@ -261,6 +309,11 @@ class GameThread extends Thread {
         
         // 카운트 업데이트
         updateCount(result);
+        
+        // 클라이언트에게 업데이트된 카운트 전송
+        sendCountUpdate();
+        
+        return result;
     }
     
     /**
@@ -278,21 +331,65 @@ class GameThread extends Thread {
                 if (strikes < 2) strikes++;
                 break;
             case JudgementProcessor.HIT:
-                batterScore++;
-                strikes = 0;
-                balls = 0;
+                // 안타: 주자들을 한 베이스씩 진루 (역순 처리)
+                boolean new3rd = false;
+                boolean new2nd = false;
+                boolean new1st = true; // 타자는 1루 출루
+                
+                // 3루 주자 -> 홈 (득점!)
+                if (runner3rd) {
+                    batterScore++;
+                }
+                
+                // 2루 주자 -> 3루 진루
+                if (runner2nd) {
+                    new3rd = true;
+                }
+                
+                // 1루 주자 -> 2루 진루
+                if (runner1st) {
+                    new2nd = true;
+                }
+                
+                // 새로운 주자 상황 업데이트
+                runner1st = new1st;
+                runner2nd = new2nd;
+                runner3rd = new3rd;
+                
+                // strikes, balls 초기화는 playInning에서 처리
                 break;
             case JudgementProcessor.HOMERUN:
-                batterScore += 4;
-                strikes = 0;
-                balls = 0;
+                // 홈런: 현재 주자 수 + 타자(1점) = 득점
+                int runsScored = 1; // 타자
+                if (runner1st) runsScored++;
+                if (runner2nd) runsScored++;
+                if (runner3rd) runsScored++;
+                
+                System.out.println("[홈런 득점] 1루:" + runner1st + " 2루:" + runner2nd + " 3루:" + runner3rd + " → " + runsScored + "점");
+                
+                batterScore += runsScored;
+                
+                // 모든 주자 클리어
+                runner1st = false;
+                runner2nd = false;
+                runner3rd = false;
+                
+                // strikes, balls 초기화는 playInning에서 처리
                 break;
             case JudgementProcessor.OUT:
                 outs++;
-                strikes = 0;
-                balls = 0;
+                // strikes, balls 초기화는 playInning에서 처리
                 break;
         }
+    }
+    
+    /**
+     * 클라이언트에게 현재 카운트 전송
+     */
+    private void sendCountUpdate() {
+        String countMsg = GameProtocol.Builder.buildCount(strikes, balls, outs);
+        pitcherStream.sendMessage(countMsg);
+        batterStream.sendMessage(countMsg);
     }
     
     /**
@@ -311,8 +408,23 @@ class GameThread extends Thread {
         pitcherScore = batterScore;
         batterScore = tempScore;
         
+        // 주자 초기화
+        runner1st = false;
+        runner2nd = false;
+        runner3rd = false;
+        
+        // 카운트 완전 초기화
+        outs = 0;
+        strikes = 0;
+        balls = 0;
+        
         pitcherStream.sendMessage("ROLE:PITCHER");
         batterStream.sendMessage("ROLE:BATTER");
+        pitcherStream.sendMessage("SWITCH:SIDE");
+        batterStream.sendMessage("SWITCH:SIDE");
+        
+        // 초기화된 카운트 전송
+        sendCountUpdate();
     }
     
     /**
@@ -320,7 +432,7 @@ class GameThread extends Thread {
      */
     private boolean isGameActive() {
         return !pitcherSocket.isClosed() && !batterSocket.isClosed();
-    }
+    } 
     
     /**
      * 게임 종료 처리
