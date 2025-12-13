@@ -300,6 +300,11 @@ class EnhancedGameThread extends Thread {
     private int batterScore = 0;
     private boolean isTopInning = true; // true: 초, false: 말
     
+    // 주자 정보
+    private boolean runner1st = false;
+    private boolean runner2nd = false;
+    private boolean runner3rd = false;
+    
     public EnhancedGameThread(int gameId, ClientHandler pitcher, ClientHandler batter, RecordManager recordManager) {
         this.gameId = gameId;
         this.pitcher = pitcher;
@@ -350,22 +355,19 @@ class EnhancedGameThread extends Thread {
                 
                 if (outs >= 3) {
                     if (!isTopInning) {
-                        // 회 종료
+                        // 회 종료 - 다음 이닝으로
                         inning++;
+                        isTopInning = true;
                         
-                        // 9회 초에 수비팀이 이기고 있으면 종료
                         if (inning > 9) {
                             break;
                         }
-                        
-                        isTopInning = true;
                     } else {
-                        // 공수 교대
+                        // 공수 교대 (초 → 말)
                         isTopInning = false;
                     }
                     
-                    swapRoles();
-                    outs = 0;
+                    swapRoles(); // 여기서 outs, strikes, balls, 주자 초기화
                 }
             }
             
@@ -385,29 +387,64 @@ class EnhancedGameThread extends Thread {
      * 한 이닝 진행
      */
     private void playInning() throws IOException, InterruptedException {
-        strikes = 0;
-        balls = 0;
-        
-        while (strikes < 3 && balls < 4 && outs < 3) {
-            playAtBat();
-        }
-        
-        if (strikes >= 3) {
-            outs++;
-            sendToAll("RESULT:STRIKEOUT:삼진 아웃!");
-            updateCount();
-        } else if (balls >= 4) {
-            sendToAll("RESULT:WALK:볼넷!");
+        while (outs < 3) {
+            // 새 타석 시작
             strikes = 0;
             balls = 0;
             updateCount();
+            
+            // 타석 진행
+            boolean atBatFinished = false;
+            while (!atBatFinished && outs < 3) {
+                String result = playAtBat();
+                
+                // 타석 종료 조건: 안타, 홈런, 아웃, 삼진, 볼넷
+                if (result.equals("HIT") || result.equals("HOMERUN") || result.equals("OUT")) {
+                    atBatFinished = true;
+                }
+                
+                // 삼진 체크
+                if (strikes >= 3) {
+                    outs++;
+                    sendToAll("RESULT:STRIKEOUT:삼진 아웃!");
+                    updateCount();
+                    atBatFinished = true;
+                }
+                
+                // 볼넷 체크
+                if (balls >= 4) {
+                    handleWalk();
+                    sendToAll("RESULT:WALK:볼넷!");
+                    updateCount();
+                    updateScore();
+                    atBatFinished = true;
+                }
+            }
         }
+    }
+    
+    /**
+     * 볼넷 처리
+     */
+    private void handleWalk() {
+        if (runner1st && runner2nd && runner3rd) {
+            // 만루: 3루 주자 득점
+            batterScore++;
+        } else if (runner1st && runner2nd) {
+            // 1,2루: 3루로 밀림
+            runner3rd = true;
+        } else if (runner1st) {
+            // 1루만: 2루로 밀림
+            runner2nd = true;
+        }
+        // 타자 1루 출루
+        runner1st = true;
     }
     
     /**
      * 한 타석 진행
      */
-    private void playAtBat() throws IOException, InterruptedException {
+    private String playAtBat() throws IOException, InterruptedException {
         // 투수에게 투구 요청
         pitcher.sendMessage(GameProtocol.ACTION_PITCH);
         
@@ -424,7 +461,7 @@ class EnhancedGameThread extends Thread {
             sendToAll("RESULT:BALL:투구 시간 초과 - 볼!");
             updateCount();
             System.out.println("[게임 " + gameId + "] 볼 판정 (타임아웃)");
-            return;
+            return "BALL";
         }
         
         System.out.println("[게임 " + gameId + "] 투구 수신: " + pitchData);
@@ -466,6 +503,8 @@ class EnhancedGameThread extends Thread {
         
         // 카운트 및 점수 업데이트
         updateGameState(result);
+        
+        return result;
     }
     
     /**
@@ -483,19 +522,48 @@ class EnhancedGameThread extends Thread {
                 if (strikes < 2) strikes++;
                 break;
             case JudgementProcessor.HIT:
-                batterScore++;
-                strikes = 0;
-                balls = 0;
+                // 안타: 주자 한 베이스씩 진루
+                boolean new3rd = false;
+                boolean new2nd = false;
+                boolean new1st = true; // 타자 1루 출루
+                
+                // 3루 주자 -> 홈 (득점!)
+                if (runner3rd) {
+                    batterScore++;
+                }
+                
+                // 2루 주자 -> 3루
+                if (runner2nd) {
+                    new3rd = true;
+                }
+                
+                // 1루 주자 -> 2루
+                if (runner1st) {
+                    new2nd = true;
+                }
+                
+                runner1st = new1st;
+                runner2nd = new2nd;
+                runner3rd = new3rd;
                 break;
             case JudgementProcessor.HOMERUN:
-                batterScore += 4;
-                strikes = 0;
-                balls = 0;
+                // 홈런: 타자 + 모든 주자 득점
+                int runsScored = 1; // 타자
+                if (runner1st) runsScored++;
+                if (runner2nd) runsScored++;
+                if (runner3rd) runsScored++;
+                
+                System.out.println("[게임 " + gameId + "] 홈런! " + runsScored + "점 득점");
+                
+                batterScore += runsScored;
+                
+                // 모든 베이스 클리어
+                runner1st = false;
+                runner2nd = false;
+                runner3rd = false;
                 break;
             case JudgementProcessor.OUT:
                 outs++;
-                strikes = 0;
-                balls = 0;
                 break;
         }
         
@@ -531,11 +599,19 @@ class EnhancedGameThread extends Thread {
         pitcherScore = batterScore;
         batterScore = tempScore;
         
+        // 주자 초기화
+        runner1st = false;
+        runner2nd = false;
+        runner3rd = false;
+        
+        // 카운트 완전 초기화
+        outs = 0;
+        strikes = 0;
+        balls = 0;
+        
         pitcher.sendMessage(GameProtocol.SWITCH_SIDE);
         batter.sendMessage(GameProtocol.SWITCH_SIDE);
         
-        strikes = 0;
-        balls = 0;
         updateCount();
         updateScore();
     }
@@ -563,7 +639,7 @@ class EnhancedGameThread extends Thread {
             pitcher.sendMessage(GameProtocol.GAME_END + ":DRAW");
             batter.sendMessage(GameProtocol.GAME_END + ":DRAW");
             return;
-        }
+        } 
         
         // 전적 기록
         recordManager.recordGameResult(winner, loser);
