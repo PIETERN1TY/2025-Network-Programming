@@ -12,7 +12,7 @@ public class GameDataStreamManager {
     private PrintWriter writer;
     private ObjectInputStream objectIn;
     private ObjectOutputStream objectOut;
-    
+     
     /**
      * 소켓을 받아서 입출력 스트림 초기화
      * @param socket 클라이언트 소켓
