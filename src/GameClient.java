@@ -83,7 +83,8 @@ public class GameClient extends JFrame {
     
     private JPanel createWaitingPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBackground(new Color(34, 139, 34));
+        
+        panel.setBackground(Color.DARK_GRAY);
         
         JLabel waitLabel = new JLabel("매칭 대기 중...", SwingConstants.CENTER);
         waitLabel.setFont(new Font("맑은 고딕", Font.BOLD, 36));
@@ -92,7 +93,7 @@ public class GameClient extends JFrame {
         panel.add(waitLabel, BorderLayout.CENTER);
         return panel;
     }
-    
+    //닉네임 설정 메세지 창 
     private void showNicknameDialog() {
         nickname = JOptionPane.showInputDialog(this, "닉네임을 입력하세요:", "닉네임 설정", JOptionPane.QUESTION_MESSAGE);
         
@@ -148,6 +149,7 @@ public class GameClient extends JFrame {
                     waitingForInput = true;
                     isMyTurn = true;
                     gamePanel.startTimer(5);
+                    gamePanel.startPitchAnimation();  // 투구 애니메이션
                 }
                 return;
             }
@@ -170,6 +172,7 @@ public class GameClient extends JFrame {
                     waitingForInput = true;
                     isMyTurn = true;
                     gamePanel.startTimer(3);
+                    gamePanel.startPitchAnimation();  // 타자 시점에서도 투구 보이기
                 }
                 return;
             }
@@ -216,10 +219,29 @@ public class GameClient extends JFrame {
         String[] parts = data.split(":", 2);
         String resultType = parts[0];
         
+        // 결과 이펙트 표시
+        gamePanel.showResult(resultType);
+        
         switch(resultType) {
-            case "HIT": gamePanel.advanceRunners("HIT"); break;
-            case "HOMERUN": gamePanel.advanceRunners("HOMERUN"); break;
-            case "WALK": gamePanel.advanceRunners("WALK"); break;
+            case "HIT": 
+                gamePanel.advanceRunners("HIT");
+                gamePanel.startSwingAnimation();
+                break;
+            case "HOMERUN": 
+                gamePanel.advanceRunners("HOMERUN");
+                gamePanel.startSwingAnimation();
+                break;
+            case "WALK": 
+                gamePanel.advanceRunners("WALK");
+                break;
+            case "OUT":
+                gamePanel.startSwingAnimation();
+                break;
+            case "STRIKE":
+            case "BALL":
+            case "FOUL":
+                // 스트라이크/볼/파울은 이펙트만 표시
+                break;
         }
     }
     
@@ -265,6 +287,7 @@ public class GameClient extends JFrame {
             waitingForInput = false;
             isMyTurn = false;
             gamePanel.stopTimer();
+            gamePanel.startSwingAnimation();  // 스윙 애니메이션
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -311,10 +334,53 @@ class GamePanel extends JPanel {
     private Timer countdownTimer;
     private int remainingSeconds = 0;
     
+    // 애니메이션 관련
+    private Timer animationTimer;
+    private String currentAnimation = ""; // PITCH, SWING, HIT, HOMERUN, STRIKEOUT
+    private int animationFrame = 0;
+    private int maxAnimationFrames = 20;
+    
+    // 투구 애니메이션
+    private int ballX = 360;
+    private int ballY = 280;
+    private boolean showBall = false;
+    
+    // 타격 이펙트
+    private String lastResult = "";
+    private int resultDisplayFrame = 0;
+    private int maxResultFrames = 60;
+    
+    // 캐릭터 애니메이션 오프셋
+    private int pitcherOffsetY = 0;
+    private int batterOffsetX = 0;
+    
     public GamePanel(GameClient client) {
         this.client = client;
         setPreferredSize(new Dimension(800, 600));
         loadImages();
+        
+        // 애니메이션 타이머 (60 FPS)
+        animationTimer = new Timer(16, e -> {
+            if (!currentAnimation.isEmpty()) {
+                animationFrame++;
+                updateAnimation();
+                repaint();
+                
+                if (animationFrame >= maxAnimationFrames) {
+                    stopAnimation();
+                }
+            }
+            
+            if (!lastResult.isEmpty()) {
+                resultDisplayFrame++;
+                if (resultDisplayFrame >= maxResultFrames) {
+                    lastResult = "";
+                    resultDisplayFrame = 0;
+                }
+                repaint();
+            }
+        });
+        animationTimer.start();
     }
     
     private void loadImages() {
@@ -326,6 +392,7 @@ class GamePanel extends JPanel {
                 backgroundImage = new ImageIcon(path + "background.jpg").getImage();
                 pitcherImage = new ImageIcon(path + "pitcher.png").getImage();
                 batterImage = new ImageIcon(path + "batter.png").getImage();
+                
                 System.out.println("이미지 로드 완료: " + path);
                 return;
             }
@@ -338,18 +405,37 @@ class GamePanel extends JPanel {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         
         // 배경
         if (backgroundImage != null) {
             g.drawImage(backgroundImage, 0, 0, getWidth(), getHeight(), this);
+            // 어두운 오버레이로 중계 느낌
+            g2.setColor(new Color(0, 0, 0, 100));
+            g2.fillRect(0, 0, getWidth(), getHeight());
         } else {
-            g.setColor(new Color(34, 100, 34));
-            g.fillRect(0, 0, getWidth(), getHeight());
+            // 기본 진한 그린 배경
+            g2.setColor(new Color(20, 60, 20));
+            g2.fillRect(0, 0, getWidth(), getHeight());
         }
         
-        // 캐릭터
-        if (pitcherImage != null) g.drawImage(pitcherImage, 360, 250, 80, 100, this);
-        if (batterImage != null) g.drawImage(batterImage, 360, 420, 80, 100, this);
+        // 캐릭터 (애니메이션 오프셋 적용)
+        if (pitcherImage != null) {
+            g.drawImage(pitcherImage, 360, 250 + pitcherOffsetY, 80, 100, this);
+        }
+        if (batterImage != null) {
+            g.drawImage(batterImage, 360 + batterOffsetX, 420, 80, 100, this);
+        }
+        
+        // 투구 공 그리기
+        if (showBall) {
+            drawBall(g2);
+        }
+        
+        // 결과 이펙트 그리기
+        if (!lastResult.isEmpty()) {
+            drawResultEffect(g2);
+        }
         
         // UI 그리기
         drawScoreboard(g2);
@@ -359,14 +445,7 @@ class GamePanel extends JPanel {
     }
     
     private void drawScoreboard(Graphics2D g) {
-        int x = 20, y = 20, w = 200, h = 140;
-        
-        // 흰색 배경 박스
-        g.setColor(Color.WHITE);
-        g.fillRoundRect(x, y, w, h, 15, 15);
-        g.setColor(new Color(200, 200, 200));
-        g.setStroke(new BasicStroke(2));
-        g.drawRoundRect(x, y, w, h, 15, 15);
+        int x = 20, y = 15, w = 250, h = 110;
         
         // 점수 결정 (타자=공격팀, 투수=수비팀)
         int attackScore, defenseScore;
@@ -378,115 +457,242 @@ class GamePanel extends JPanel {
             defenseScore = myScore;
         }
         
-        // 공격팀 (빨간색)
+        // 메인 스코어보드 배경 (진한 네이비)
+        g.setColor(new Color(15, 32, 60));
+        g.fillRoundRect(x, y, w, h, 12, 12);
+        
+        // 금색 테두리
+        g.setColor(new Color(218, 165, 32));
+        g.setStroke(new BasicStroke(3));
+        g.drawRoundRect(x, y, w, h, 12, 12);
+        
+        // 이닝 표시 (상단 중앙)
+        g.setColor(new Color(218, 165, 32));
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 20));
+        String inningText = inning + (isTopInning ? "회초" : "회말");
+        FontMetrics fm = g.getFontMetrics();
+        int inningWidth = fm.stringWidth(inningText);
+        g.drawString(inningText, x + (w - inningWidth) / 2, y + 25);
+        
+        // 팀 스코어 레이아웃
+        int scoreY = y + 50;
+        int scoreSpacing = 30;
+        
+        // AWAY (공격팀)
         g.setColor(new Color(220, 53, 69));
-        g.fillRect(x + 5, y + 8, w - 10, 40);
+        g.fillRoundRect(x + 10, scoreY, 90, 22, 8, 8);
         g.setColor(Color.WHITE);
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
-        g.drawString("공격팀", x + 15, y + 35);
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 24));
-        g.drawString(String.valueOf(attackScore), x + w - 40, y + 38);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 14));
+        g.drawString("AWAY", x + 20, scoreY + 16);
         
-        // 수비팀 (파란색)
-        g.setColor(new Color(0, 123, 255));
-        g.fillRect(x + 5, y + 53, w - 10, 40);
+        // 공격팀 점수
         g.setColor(Color.WHITE);
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
-        g.drawString("수비팀", x + 15, y + 80);
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 24));
-        g.drawString(String.valueOf(defenseScore), x + w - 40, y + 83);
+        g.setFont(new Font("Impact", Font.BOLD, 32));
+        g.drawString(String.valueOf(attackScore), x + 115, scoreY + 20);
         
-        // 타이머
-        g.setColor(Color.BLACK);
-        g.setFont(new Font("맑은 고딕", Font.PLAIN, 16));
-        g.drawString("⏱ 0:" + String.format("%02d", remainingSeconds), x + 15, y + 125);
+        // HOME (수비팀)
+        scoreY += scoreSpacing;
+        g.setColor(new Color(0, 102, 204));
+        g.fillRoundRect(x + 10, scoreY, 90, 22, 8, 8);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 14));
+        g.drawString("HOME", x + 20, scoreY + 16);
+        
+        // 수비팀 점수
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("Impact", Font.BOLD, 32));
+        g.drawString(String.valueOf(defenseScore), x + 115, scoreY + 20);
     }
     
     private void drawBaseDiamond(Graphics2D g) {
-        int cx = 400, cy = 75;
+        int cx = 400, cy = 55, size = 80;
         
-        // 흰색 배경 박스
-        g.setColor(Color.WHITE);
-        g.fillRoundRect(cx - 75, 15, 150, 110, 15, 15);
-        g.setColor(new Color(200, 200, 200));
-        g.drawRoundRect(cx - 75, 15, 150, 110, 15, 15);
+        // 베이스 다이아몬드 배경
+        g.setColor(new Color(15, 32, 60));
+        g.fillRoundRect(cx - size/2 - 10, cy - size/2 - 10, size + 20, size + 30, 12, 12);
         
-        // 베이스 3개만 (홈 제외)
-        drawBase(g, cx, cy - 25, runner2nd);      // 2루 (위)
-        drawBase(g, cx - 35, cy + 5, runner3rd);  // 3루 (왼쪽)
-        drawBase(g, cx + 35, cy + 5, runner1st);  // 1루 (오른쪽)
+        // 금색 테두리
+        g.setColor(new Color(218, 165, 32));
+        g.setStroke(new BasicStroke(2));
+        g.drawRoundRect(cx - size/2 - 10, cy - size/2 - 10, size + 20, size + 30, 12, 12);
         
-        // 이닝 (초▲ / 말▼)
-        g.setColor(Color.BLACK);
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
-        String inningText = inning + (isTopInning ? "▲" : "▼");
-        g.drawString(inningText, cx - 15, cy + 55);
+        // 다이아몬드 연결선 (흐린 흰색)
+        g.setColor(new Color(255, 255, 255, 60));
+        g.setStroke(new BasicStroke(1.5f));
+        int[] xLine = {cx, cx + 25, cx, cx - 25, cx};
+        int[] yLine = {cy - 20, cy, cy + 20, cy, cy - 20};
+        g.drawPolyline(xLine, yLine, 5);
+        
+        // 베이스 3개
+        drawBase(g, cx, cy - 20, runner2nd);      // 2루 (위)
+        drawBase(g, cx - 25, cy, runner3rd);      // 3루 (왼쪽)
+        drawBase(g, cx + 25, cy, runner1st);      // 1루 (오른쪽)
+        
+        // 홈 플레이트 (작은 오각형)
+        int[] xHome = {cx - 6, cx + 6, cx + 6, cx, cx - 6};
+        int[] yHome = {cy + 20, cy + 20, cy + 26, cy + 29, cy + 26};
+        g.setColor(new Color(240, 240, 240));
+        g.fillPolygon(xHome, yHome, 5);
+        g.setColor(new Color(100, 100, 100));
+        g.drawPolygon(xHome, yHome, 5);
     }
     
     private void drawBase(Graphics2D g, int x, int y, boolean hasRunner) {
-        int size = 24;
+        int size = 16;
         int[] xp = {x, x + size/2, x, x - size/2};
         int[] yp = {y - size/2, y, y + size/2, y};
         
-        g.setColor(hasRunner ? new Color(255, 140, 0) : new Color(200, 200, 200));
-        g.fillPolygon(xp, yp, 4);
-        g.setColor(new Color(100, 100, 100));
+        // 베이스 색상 (주자 있으면 밝은 주황색, 없으면 흰색)
+        if (hasRunner) {
+            g.setColor(new Color(255, 152, 0));
+            g.fillPolygon(xp, yp, 4);
+            g.setColor(new Color(230, 130, 0));
+        } else {
+            g.setColor(new Color(240, 240, 240));
+            g.fillPolygon(xp, yp, 4);
+            g.setColor(new Color(180, 180, 180));
+        }
+        g.setStroke(new BasicStroke(2));
         g.drawPolygon(xp, yp, 4);
     }
     
     private void drawBSOCount(Graphics2D g) {
-        int x = 560, y = 20, w = 140, h = 115;
+        int x = 550, y = 15, w = 230, h = 110;
         
-        // 흰색 배경 박스
-        g.setColor(Color.WHITE);
-        g.fillRoundRect(x, y, w, h, 15, 15);
-        g.setColor(new Color(200, 200, 200));
-        g.drawRoundRect(x, y, w, h, 15, 15);
+        // 메인 배경 (진한 네이비)
+        g.setColor(new Color(15, 32, 60));
+        g.fillRoundRect(x, y, w, h, 12, 12);
         
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 18));
+        // 금색 테두리
+        g.setColor(new Color(218, 165, 32));
+        g.setStroke(new BasicStroke(3));
+        g.drawRoundRect(x, y, w, h, 12, 12);
         
-        // Ball (초록색)
-        g.setColor(Color.BLACK);
-        g.drawString("B", x + 15, y + 30);
-        for (int i = 0; i < 4; i++) {
-            g.setColor(i < balls ? new Color(40, 167, 69) : new Color(200, 200, 200));
-            g.fillOval(x + 40 + i * 22, y + 15, 16, 16);
+        int labelX = x + 20;
+        int circleStartX = x + 80;
+        int circleSize = 20;
+        int circleSpacing = 30;
+        
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 20));
+        
+        // Ball (3개)
+        g.setColor(new Color(100, 200, 100));
+        g.drawString("B", labelX, y + 35);
+        for (int i = 0; i < 3; i++) {
+            if (i < balls) {
+                g.setColor(new Color(76, 175, 80));
+                g.fillOval(circleStartX + i * circleSpacing, y + 20, circleSize, circleSize);
+                g.setColor(new Color(56, 142, 60));
+            } else {
+                g.setColor(new Color(40, 40, 40));
+                g.fillOval(circleStartX + i * circleSpacing, y + 20, circleSize, circleSize);
+                g.setColor(new Color(60, 60, 60));
+            }
+            g.setStroke(new BasicStroke(2));
+            g.drawOval(circleStartX + i * circleSpacing, y + 20, circleSize, circleSize);
         }
         
-        // Strike (주황색)
-        g.setColor(Color.BLACK);
-        g.drawString("S", x + 15, y + 62);
-        for (int i = 0; i < 3; i++) {
-            g.setColor(i < strikes ? new Color(255, 165, 0) : new Color(200, 200, 200));
-            g.fillOval(x + 40 + i * 22, y + 47, 16, 16);
+        // Strike (2개)
+        g.setColor(new Color(255, 193, 7));
+        g.drawString("S", labelX, y + 68);
+        for (int i = 0; i < 2; i++) {
+            if (i < strikes) {
+                g.setColor(new Color(255, 193, 7));
+                g.fillOval(circleStartX + i * circleSpacing, y + 53, circleSize, circleSize);
+                g.setColor(new Color(245, 127, 23));
+            } else {
+                g.setColor(new Color(40, 40, 40));
+                g.fillOval(circleStartX + i * circleSpacing, y + 53, circleSize, circleSize);
+                g.setColor(new Color(60, 60, 60));
+            }
+            g.setStroke(new BasicStroke(2));
+            g.drawOval(circleStartX + i * circleSpacing, y + 53, circleSize, circleSize);
         }
         
-        // Out (빨간색)
-        g.setColor(Color.BLACK);
-        g.drawString("O", x + 15, y + 94);
-        for (int i = 0; i < 3; i++) {
-            g.setColor(i < outs ? new Color(220, 53, 69) : new Color(200, 200, 200));
-            g.fillOval(x + 40 + i * 22, y + 79, 16, 16);
+        // Out (2개)
+        g.setColor(new Color(244, 67, 54));
+        g.drawString("O", labelX, y + 101);
+        for (int i = 0; i < 2; i++) {
+            if (i < outs) {
+                g.setColor(new Color(244, 67, 54));
+                g.fillOval(circleStartX + i * circleSpacing, y + 86, circleSize, circleSize);
+                g.setColor(new Color(198, 40, 40));
+            } else {
+                g.setColor(new Color(40, 40, 40));
+                g.fillOval(circleStartX + i * circleSpacing, y + 86, circleSize, circleSize);
+                g.setColor(new Color(60, 60, 60));
+            }
+            g.setStroke(new BasicStroke(2));
+            g.drawOval(circleStartX + i * circleSpacing, y + 86, circleSize, circleSize);
+        }
+        
+        // 타이머 (우측 상단)
+        if (remainingSeconds > 0) {
+            g.setColor(remainingSeconds <= 2 ? new Color(244, 67, 54) : new Color(218, 165, 32));
+            g.setFont(new Font("Impact", Font.BOLD, 28));
+            g.drawString("0:" + String.format("%02d", remainingSeconds), x + w - 65, y + 35);
         }
     }
     
     private void drawControlInfo(Graphics2D g) {
-        int y = getHeight() - 50;
+        int y = getHeight() - 60;
         
-        g.setColor(new Color(0, 0, 0, 180));
-        g.fillRect(0, y - 5, getWidth(), 55);
+        // 진한 그라데이션 배경
+        GradientPaint gradient = new GradientPaint(
+            0, y, new Color(15, 32, 60, 240),
+            0, getHeight(), new Color(10, 20, 40, 250)
+        );
+        g.setPaint(gradient);
+        g.fillRect(0, y, getWidth(), 60);
         
-        g.setFont(new Font("맑은 고딕", Font.BOLD, 14));
-        g.setColor(Color.ORANGE);
-        g.drawString("투수: A(포크) S(직구) D(커브) F(슬라이더)", 30, y + 15);
-        g.setColor(Color.CYAN);
-        g.drawString("타자: H(스윙)", 30, y + 35);
+        // 상단 금색 라인
+        g.setColor(new Color(218, 165, 32));
+        g.setStroke(new BasicStroke(2));
+        g.drawLine(0, y, getWidth(), y);
         
-        // 현재 역할
-        g.setColor(Color.WHITE);
-        String roleText = role.equals("PITCHER") ? "[ 투수 ]" : role.equals("BATTER") ? "[ 타자 ]" : "";
+        // 조작키 안내
         g.setFont(new Font("맑은 고딕", Font.BOLD, 16));
-        g.drawString(roleText, getWidth() - 100, y + 25);
+        
+        // 투수 조작 (주황색)
+        g.setColor(new Color(255, 193, 7));
+        g.drawString("투수", 30, y + 22);
+        g.setColor(new Color(230, 230, 230));
+        g.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
+        g.drawString("A(포크) S(직구) D(커브) F(슬라이더)", 80, y + 22);
+        
+        // 타자 조작 (하늘색)
+        g.setColor(new Color(33, 150, 243));
+        g.setFont(new Font("맑은 고딕", Font.BOLD, 16));
+        g.drawString("타자", 30, y + 45);
+        g.setColor(new Color(230, 230, 230));
+        g.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
+        g.drawString("H(스윙)", 80, y + 45);
+        
+        // 현재 역할 표시 (우측)
+        if (!role.isEmpty()) {
+            String roleText = role.equals("PITCHER") ? "투수" : "타자";
+            Color roleColor = role.equals("PITCHER") ? new Color(255, 193, 7) : new Color(33, 150, 243);
+            
+            g.setFont(new Font("맑은 고딕", Font.BOLD, 20));
+            FontMetrics fm = g.getFontMetrics();
+            int textWidth = fm.stringWidth("▶ " + roleText);
+            
+            // 배경 박스
+            int boxX = getWidth() - textWidth - 50;
+            g.setColor(new Color(0, 0, 0, 120));
+            g.fillRoundRect(boxX - 10, y + 15, textWidth + 30, 32, 8, 8);
+            
+            // 테두리
+            g.setColor(roleColor);
+            g.setStroke(new BasicStroke(2));
+            g.drawRoundRect(boxX - 10, y + 15, textWidth + 30, 32, 8, 8);
+            
+            // 텍스트
+            g.setColor(roleColor);
+            g.drawString("▶", boxX, y + 38);
+            g.setColor(Color.WHITE);
+            g.drawString(roleText, boxX + 20, y + 38);
+        }
     }
     
     // 업데이트 메서드들
@@ -567,5 +773,215 @@ class GamePanel extends JPanel {
     
     public void addLog(String msg) {
         System.out.println("[로그] " + msg);
+    }
+    
+    // ===== 애니메이션 메서드 =====
+    
+    /**
+     * 투구 애니메이션 시작
+     */
+    public void startPitchAnimation() {
+        currentAnimation = "PITCH";
+        animationFrame = 0;
+        ballX = 360;
+        ballY = 280;
+        showBall = true;
+        pitcherOffsetY = 0;
+    }
+    
+    /**
+     * 타격 애니메이션 시작
+     */
+    public void startSwingAnimation() {
+        currentAnimation = "SWING";
+        animationFrame = 0;
+        batterOffsetX = 0;
+    }
+    
+    /**
+     * 애니메이션 업데이트
+     */
+    private void updateAnimation() {
+        float progress = (float) animationFrame / maxAnimationFrames;
+        
+        switch (currentAnimation) {
+            case "PITCH":
+                // 투수 모션 (위로 살짝 올라갔다 내려옴)
+                if (progress < 0.3f) {
+                    pitcherOffsetY = (int)(-15 * Math.sin(progress * Math.PI / 0.3));
+                } else {
+                    pitcherOffsetY = 0;
+                }
+                
+                // 공이 투수 -> 타자로 이동
+                ballY = 280 + (int)((450 - 280) * progress);
+                
+                // 공이 타자에게 도달하면 숨김
+                if (progress > 0.95f) {
+                    showBall = false;
+                }
+                break;
+                
+            case "SWING":
+                // 타자 스윙 모션 (좌우로 휘두르기)
+                if (progress < 0.5f) {
+                    batterOffsetX = (int)(-30 * Math.sin(progress * Math.PI / 0.5));
+                } else {
+                    batterOffsetX = (int)(30 * Math.sin((progress - 0.5) * Math.PI / 0.5));
+                }
+                break;
+        }
+    }
+    
+    /**
+     * 애니메이션 중지
+     */
+    private void stopAnimation() {
+        currentAnimation = "";
+        animationFrame = 0;
+        showBall = false;
+        pitcherOffsetY = 0;
+        batterOffsetX = 0;
+        repaint();
+    }
+    
+    /**
+     * 공 그리기
+     */
+    private void drawBall(Graphics2D g) {
+        // 공 그림자
+        g.setColor(new Color(0, 0, 0, 100));
+        g.fillOval(ballX + 38, ballY + 12, 14, 8);
+        
+        // 야구공
+        g.setColor(Color.WHITE);
+        g.fillOval(ballX + 35, ballY + 5, 18, 18);
+        
+        // 봉합선
+        g.setColor(new Color(200, 50, 50));
+        g.setStroke(new BasicStroke(2));
+        g.drawArc(ballX + 37, ballY + 7, 7, 14, 90, 180);
+        g.drawArc(ballX + 44, ballY + 7, 7, 14, 270, 180);
+    }
+    
+    /**
+     * 결과 이펙트 그리기
+     */
+    private void drawResultEffect(Graphics2D g) {
+        int centerX = getWidth() / 2;
+        int centerY = getHeight() / 2 - 50;
+        
+        float alpha = 1.0f - ((float) resultDisplayFrame / maxResultFrames);
+        if (alpha < 0) alpha = 0;
+        
+        String displayText = "";
+        Color effectColor = Color.WHITE;
+        int fontSize = 60;
+        
+        switch (lastResult) {
+            case "HIT":
+                displayText = "안타!";
+                effectColor = new Color(76, 175, 80);
+                break;
+            case "HOMERUN":
+                displayText = "홈런!!!";
+                effectColor = new Color(255, 193, 7);
+                fontSize = 80;
+                // 폭죽 효과
+                drawFireworks(g, centerX, centerY, resultDisplayFrame);
+                break;
+            case "OUT":
+                displayText = "아웃!";
+                effectColor = new Color(244, 67, 54);
+                break;
+            case "STRIKEOUT":
+                displayText = "삼진!";
+                effectColor = new Color(244, 67, 54);
+                fontSize = 70;
+                break;
+            case "STRIKE":
+                displayText = "스트라이크!";
+                effectColor = new Color(255, 152, 0);
+                fontSize = 50;
+                break;
+            case "BALL":
+                displayText = "볼!";
+                effectColor = new Color(76, 175, 80);
+                fontSize = 50;
+                break;
+            case "FOUL":
+                displayText = "파울!";
+                effectColor = new Color(156, 39, 176);
+                fontSize = 50;
+                break;
+            case "WALK":
+                displayText = "볼넷!";
+                effectColor = new Color(33, 150, 243);
+                break;
+        }
+        
+        if (!displayText.isEmpty()) {
+            // 텍스트 크기 애니메이션 (처음에 커졌다가 작아짐)
+            float scale = 1.0f + (1.0f - alpha) * 0.3f;
+            if (resultDisplayFrame < 10) {
+                scale = 0.5f + (resultDisplayFrame / 10.0f) * 0.8f;
+            }
+            
+            Font font = new Font("맑은 고딕", Font.BOLD, (int)(fontSize * scale));
+            g.setFont(font);
+            
+            FontMetrics fm = g.getFontMetrics();
+            int textWidth = fm.stringWidth(displayText);
+            
+            // 텍스트 그림자
+            g.setColor(new Color(0, 0, 0, (int)(200 * alpha)));
+            g.drawString(displayText, centerX - textWidth/2 + 3, centerY + 3);
+            
+            // 메인 텍스트
+            g.setColor(new Color(effectColor.getRed(), effectColor.getGreen(), 
+                                  effectColor.getBlue(), (int)(255 * alpha)));
+            g.drawString(displayText, centerX - textWidth/2, centerY);
+            
+            // 외곽선
+            g.setStroke(new BasicStroke(3));
+            g.setColor(new Color(255, 255, 255, (int)(150 * alpha)));
+            g.drawString(displayText, centerX - textWidth/2, centerY);
+        }
+    }
+    
+    /**
+     * 홈런 폭죽 효과
+     */
+    private void drawFireworks(Graphics2D g, int centerX, int centerY, int frame) {
+        if (frame > 15) {
+            for (int i = 0; i < 12; i++) {
+                double angle = (i * Math.PI * 2) / 12;
+                int distance = (frame - 15) * 4;
+                int x = centerX + (int)(Math.cos(angle) * distance);
+                int y = centerY + (int)(Math.sin(angle) * distance);
+                
+                float alpha = 1.0f - ((float)(frame - 15) / 45.0f);
+                if (alpha < 0) alpha = 0;
+                 
+                Color[] colors = {
+                    new Color(255, 193, 7),
+                    new Color(244, 67, 54),
+                    new Color(76, 175, 80),
+                    new Color(33, 150, 243)
+                };
+                
+                Color c = colors[i % colors.length];
+                g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), (int)(255 * alpha)));
+                g.fillOval(x - 5, y - 5, 10, 10);
+            }
+        }
+    } 
+    
+    /**
+     * 결과 표시 시작
+     */
+    public void showResult(String result) {
+        lastResult = result;
+        resultDisplayFrame = 0;
     }
 }
