@@ -2,7 +2,7 @@
  * 서버-클라이언트 간 통신 프로토콜 정의
  * 모든 메시지 형식을 상수로 관리하여 일관성 유지
  */
-public class GameProtocol {
+public class GameProtocol { 
     
     // ===== 연결 및 초기화 관련 =====
     public static final String CONNECT_REQUEST = "CONNECT";
