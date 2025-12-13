@@ -13,7 +13,7 @@ public class JudgementProcessor {
     public static final String HIT = "HIT";
     public static final String HOMERUN = "HOMERUN";
     public static final String OUT = "OUT";
-    
+     
     private Random random;
     
     public JudgementProcessor() {
