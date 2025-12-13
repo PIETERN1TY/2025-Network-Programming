@@ -1,11 +1,12 @@
 /*
- * 서버 측에서 특정 구종(포크, 직구, 커브, 슬라이더)의 범위에 따라 구속을 랜덤으로 결정하는 로직을 구현
+ * 서버 측에서 특정 구종(포크, 직구, 커브, 슬라이더)의 범위에 따라
+ 구속을 랜덤으로 결정하는 로직을 구현
  */
 import java.util.Random;
 
 public class RandomSpeedGenerator {
     private Random random;
-    
+     
     // 구종별 구속 범위 (km/h)
     private static final int FORK_MIN = 110;
     private static final int FORK_MAX = 130;
