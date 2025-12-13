@@ -1,5 +1,6 @@
 /*
- * 투수 클라이언트에서 5초 제한 시간 내에 A, S, D, F 키 입력을 처리하고 서버로 구종 데이터를 직렬화하여 전송하는 역할
+ * 투수 클라이언트에서 5초 제한 시간 내에 A, S, D, F 키 입력을 처리하고 
+ * 서버로 구종 데이터를 직렬화하여 전송하는 역할
  */
 
 import java.awt.Dimension;
@@ -31,7 +32,7 @@ public class PitcherDecisionHandler extends JPanel implements ActionListener, Ke
     	pitcherImage = new ImageIcon("images/pitcher.png").getImage();
     	batterImage = new ImageIcon("images/batter.png").getImage();
     	backgroundImage = new ImageIcon("images/background.jpg").getImage();
-    	
+    	 
     	pKeys = new boolean[256];
     	bKeys = new boolean[256];
     	
@@ -40,7 +41,7 @@ public class PitcherDecisionHandler extends JPanel implements ActionListener, Ke
     	pitcherY = 360;
     	
     	// 초기 타자 위치 설정 
-    	batterX = 180;
+    	batterX = 100;
     	batterY = 180;
     	
     	// 투수 제구 타이머 설정
