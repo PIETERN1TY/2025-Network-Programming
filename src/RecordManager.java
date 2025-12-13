@@ -7,7 +7,7 @@ import java.util.*;
 public class RecordManager {
     private String recordFilePath;
     private Map<String, PlayerRecord> recordMap;
-    
+     
     /**
      * 기본 생성자 - 기본 파일 경로 사용
      */
